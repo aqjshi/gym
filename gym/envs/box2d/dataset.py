@@ -21,6 +21,7 @@ from pygame import gfxdraw
 import cv2
 import numpy as np
 
+pygame.init()
 
 from datetime import datetime 
 if __name__ == "__main__":
