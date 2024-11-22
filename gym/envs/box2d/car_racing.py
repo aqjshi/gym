@@ -3,6 +3,8 @@ __credits__ = ["Andrea PIERRÉ"]
 import math
 from typing import Optional, Union
 
+import cv2
+import numpy as np
 import numpy as np
 
 import gym
@@ -563,7 +565,7 @@ class CarRacing(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
         return self.state, step_reward, terminated, truncated, {}
-
+    
     def render(self):
         if self.render_mode is None:
             gym.logger.warn(
@@ -772,6 +774,53 @@ class CarRacing(gym.Env, EzPickle):
             pygame.display.quit()
             self.isopen = False
             pygame.quit()
+    def get_speed(self):
+        """
+        Returns the current speed of the car.
+        """
+        assert self.car is not None
+        return np.sqrt(
+            np.square(self.car.hull.linearVelocity[0]) +
+            np.square(self.car.hull.linearVelocity[1])
+        )
+    def get_abs_sensors_0(self):
+        assert self.car is not None
+        return self.car.wheels[0].omega
+    def get_abs_sensors_1(self):
+        assert self.car is not None
+        return self.car.wheels[1].omega
+    def get_abs_sensors_2(self):
+        assert self.car is not None
+        return self.car.wheels[2].omega
+    def get_abs_sensors_3(self):
+        assert self.car is not None
+        return self.car.wheels[3].omega
+    
+
+
+
+    def save_image(self, filename, quality=30, resolution=(96, 96)):
+
+        if self.surf is None:
+            print("Surface not initialized. Cannot save image.")
+            return
+
+        # Get the raw pixel data from the pygame Surface
+        raw_str = pygame.image.tostring(self.surf, "RGB")
+        width, height = self.surf.get_size()
+
+        # Convert to a NumPy array for OpenCV processing
+        img = np.frombuffer(raw_str, dtype=np.uint8).reshape((height, width, 3))
+
+        # Convert RGB to BGR (OpenCV uses BGR by default)
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        # Resize the image
+        img_resized = cv2.resize(img_bgr, resolution, interpolation=cv2.INTER_LINEAR)
+
+        # Save as JPEG with compression
+        cv2.imwrite(filename, img_resized, [cv2.IMWRITE_JPEG_QUALITY, quality])
+
 
 
 if __name__ == "__main__":
