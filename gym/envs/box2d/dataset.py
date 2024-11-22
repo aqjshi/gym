@@ -73,7 +73,7 @@ if __name__ == "__main__":
 
         unique_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
         if os.stat(output_csv).st_size == 0:
-            output.write("unique_id,step,reward,steer,gas,brake,true_speed,abs_0,abs_1,abs_2,abs_3\n")
+            output.write("unique_id,step,reward,steer,gas,brake,true_speed,abs_0,abs_1,abs_2,abs_3,on_grass,sensor_0,sensor_1,sensor_2,sensor_3,sensor_4,sensor_5,sensor_6,sensor_7\n")
         while not quit:
             #generate unique id
             env.reset()
@@ -84,9 +84,9 @@ if __name__ == "__main__":
             while True:
                 action_space = env.action_space  # Get the current action space dynamically
                 register_input()  # Log keyboard input with action space
-                s, r, terminated, truncated, info = env.step(a)
+                s, r, terminated, truncated, info, on_grass, sensor_readings = env.step(a)
                 total_reward += r
-                output.write(f"{unique_id},{steps},{r},{a[0]},{a[1]},{a[2]},{env.get_speed():.2f},{env.get_abs_sensors_0():.2f},{env.get_abs_sensors_1():.2f},{env.get_abs_sensors_2():.2f},{env.get_abs_sensors_3():.2f}\n")
+                output.write(f"{unique_id},{steps},{r},{a[0]},{a[1]},{a[2]},{env.get_speed():.2f},{env.get_abs_sensors_0():.2f},{env.get_abs_sensors_1():.2f},{env.get_abs_sensors_2():.2f},{env.get_abs_sensors_3():.2f}, {on_grass}, {sensor_readings[0]}, {sensor_readings[1]}, {sensor_readings[2]}, {sensor_readings[3]}, {sensor_readings[4]}, {sensor_readings[5]}, {sensor_readings[6]}, {sensor_readings[7]}\n")
 
 
                 if (steps % 10 == 0 and steps > 30) or terminated:
