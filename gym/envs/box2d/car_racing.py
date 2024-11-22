@@ -631,6 +631,7 @@ class CarRacing(gym.Env, EzPickle):
         (1 if on_grass else 0), 
         self.get_sensor_readings(),
         )
+        
     def render(self):
         if self.render_mode is None:
             gym.logger.warn(
