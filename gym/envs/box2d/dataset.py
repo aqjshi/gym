@@ -89,12 +89,12 @@ if __name__ == "__main__":
                 output.write(f"{unique_id},{steps},{r},{a[0]},{a[1]},{a[2]},{env.get_speed():.2f},{env.get_abs_sensors_0():.2f},{env.get_abs_sensors_1():.2f},{env.get_abs_sensors_2():.2f},{env.get_abs_sensors_3():.2f}\n")
 
 
-                if (steps % 10 == 0 and steps > 30) or terminated or truncated:
+                if (steps % 10 == 0 and steps > 30) or terminated:
                     image_filename = os.path.join(image_dir, f"{unique_id}_{steps}.png")
                     env.save_image(image_filename, quality=30, resolution=(96, 96))
                     # print(f"\naction: {a[0]:+0.2f} {a[1]:+0.2f} {a[2]:+0.2f}")
                     # print(f"step {steps} total_reward {total_reward:+0.2f}")
                 steps += 1
-                if terminated or truncated or restart or quit:
+                if terminated or restart or quit:
                     break
             env.close()

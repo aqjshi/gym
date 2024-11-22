@@ -547,16 +547,35 @@ class CarRacing(gym.Env, EzPickle):
         truncated = False
         if action is not None:  # First step without action, called from reset()
             self.reward -= 0.1
+            # Check if the car is touching the grass
+            car_pos = self.car.hull.position
+            on_grass = True
+            for tile in self.road:
+                if tile.fixtures[0].shape.TestPoint(tile.transform, car_pos):
+                    on_grass = False
+                    break
+
+            if on_grass:
+                self.reward -= 1  # Apply grass penalty
+            
             # We actually don't want to count fuel spent, we want car to be faster.
             # self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
             self.car.fuel_spent = 0.0
             step_reward = self.reward - self.prev_reward
             self.prev_reward = self.reward
-            if self.tile_visited_count == len(self.track) or self.new_lap:
+            if self.tile_visited_count >=  len(self.track)* .8 or self.new_lap:
                 # Truncation due to finishing lap
                 # This should not be treated as a failure
                 # but like a timeout
-                truncated = True
+                
+                
+                self.new_lap = False  # Reset new_lap flag
+
+                # Reset tiles
+                for tile in self.road:
+                    tile.road_visited = False
+                    
+                truncated = True 
             x, y = self.car.hull.position
             if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
                 terminated = True
