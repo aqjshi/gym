@@ -82,6 +82,9 @@ class Car:
         )
         self.hull.color = (0.8, 0.0, 0.0)
         self.wheels = []
+        self.on_grass = False
+        
+        
         self.fuel_spent = 0.0
         WHEEL_POLY = [
             (-WHEEL_W, +WHEEL_R),

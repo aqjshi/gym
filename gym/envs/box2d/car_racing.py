@@ -57,11 +57,12 @@ MAX_SHAPE_DIM = (
 
 import math
 RAY_LENGTH = 50
+# [0, 45, 90, 135, 180, 225, 270, 315]
+# back angles [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5]
+# front angles [180, 202.5, 225, 247.5, 270, 292.5, 315, 337.5] 
 
-SENSOR_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315]
-CATEGORY_GRASS = 0x0001
-CATEGORY_ROAD = 0x0002
-
+CATEGORY_ROAD = 0x0001
+# CATEGORY_GRASS = #grass_color = np.array([102, 230, 102])
     
     
 
@@ -112,25 +113,7 @@ class FrictionDetector(contactListener):
         else:
             obj.tiles.remove(tile)
 
-class GrassRayCastCallback(Box2D.b2RayCastCallback):
-    def __init__(self):
-        super().__init__()
-        self.fraction = -1  # Default value if nothing is hit
-        self.fixture = None  # The fixture that was hit
-        self.point = None  # The point of intersection
-        self.normal = None  # The normal at the point of intersection
 
-    def ReportFixture(self, fixture, point, normal, fraction):
-        # Check if the fixture belongs to grass using its category bits
-        if fixture.filterData.categoryBits == CATEGORY_GRASS:
-            self.fraction = fraction
-            self.fixture = fixture
-            self.point = point
-            self.normal = normal
-            return fraction  # Continue raycasting
-        return -1  # Ignore this fixture and continue searching
-
-    
     
 class CarRacing(gym.Env, EzPickle):
     """
@@ -236,6 +219,11 @@ class CarRacing(gym.Env, EzPickle):
             domain_randomize,
             continuous,
         )
+        self.SENSOR_ANGLES = [202.5,337.5]
+        
+        self.RAY_LENGTH = 200
+        self.GRASS_PENALTY = 2
+        
 
         self.continuous = continuous
         self.domain_randomize = domain_randomize
@@ -259,7 +247,7 @@ class CarRacing(gym.Env, EzPickle):
         self.fd_tile = fixtureDef(
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
         )
-        self.cached_sensor_readings = None  # Cached sensor readings
+
         self.cache_valid = False  
 
         # This will throw a warning in tests/envs/test_envs in utils/env_checker.py as the space is not symmetric
@@ -285,9 +273,10 @@ class CarRacing(gym.Env, EzPickle):
         for t in self.road:
             self.world.DestroyBody(t)
         self.road = []
+        
         assert self.car is not None
         self.car.destroy()
-
+    
     def _init_colors(self):
         if self.domain_randomize:
             # domain randomize the bg and grass colour
@@ -339,7 +328,8 @@ class CarRacing(gym.Env, EzPickle):
 
             checkpoints.append((alpha, rad * math.cos(alpha), rad * math.sin(alpha)))
         self.road = []
-
+        
+        
         # Go from one checkpoint to another to create track
         x, y, beta = 1.5 * TRACK_RAD, 0, 0
         dest_i = 0
@@ -506,15 +496,17 @@ class CarRacing(gym.Env, EzPickle):
                         (255, 255, 255) if i % 2 == 0 else (255, 0, 0),
                     )
                 )
+        
         self.track = track
         return True
-
+ 
     def reset(
         self,
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
+        self.cache_valid = False
         super().reset(seed=seed)
         self._destroy()
         self.world.contactListener_bug_workaround = FrictionDetector(
@@ -579,23 +571,21 @@ class CarRacing(gym.Env, EzPickle):
         step_reward = 0
         terminated = False
         truncated = False
-        on_grass = True
         
         
+        
+
         
         if action is not None:  # First step without action, called from reset()
             self.reward -= 0.1
-
-            # Check if the car is touching the grass
             car_pos = self.car.hull.position
-            for tile in self.road:
-                if tile.fixtures[0].shape.TestPoint(tile.transform, car_pos):
-                    on_grass = False
-                    break
+            is_on_grass = self.is_on_grass(car_pos)
+            self.car.on_grass = is_on_grass
+            if is_on_grass:
+                self.reward -= self.GRASS_PENALTY
 
-            if on_grass:
-                self.reward -= 1  # Apply grass penalty
-                
+
+             # Get the latest sensor readings
 
             # We actually don't want to count fuel spent, we want car to be faster.
             # self.reward -=  10 * self.car.fuel_spent / ENGINE_POWER
@@ -619,7 +609,8 @@ class CarRacing(gym.Env, EzPickle):
             if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
                 terminated = True
                 step_reward = -100
-
+        self.cache_valid = False
+        
         if self.render_mode == "human":
             self.render()
         return (
@@ -628,8 +619,6 @@ class CarRacing(gym.Env, EzPickle):
         terminated,
         truncated,
         {},
-        (1 if on_grass else 0), 
-        self.get_sensor_readings(),
         )
         
     def render(self):
@@ -678,8 +667,6 @@ class CarRacing(gym.Env, EzPickle):
         )
 
         self.surf = pygame.transform.flip(self.surf, False, True)
-        self._draw_sensor_rays(zoom, trans, angle)
-
         # showing stats
         self._render_indicators(WINDOW_W, WINDOW_H)
 
@@ -703,43 +690,7 @@ class CarRacing(gym.Env, EzPickle):
             return self._create_image_array(self.surf, (STATE_W, STATE_H))
         else:
             return self.isopen
-    def _draw_sensor_rays(self, zoom, translation, angle):
-        """
-        Draw sensor rays, shifting both their start and end points downward by a static amount.
-        """
-        sensor_readings = self.cast_sensor_readings()  
-        car_pos = self.car.hull.position  # Car's world position
-        car_angle = self.car.hull.angle   # Car's orientation
-
-        # Static downward shift (in screen coordinates)
-        static_shift = 400  # Adjust this value to move the rays downward
-
-        for i, sensor_angle in enumerate(SENSOR_ANGLES):
-            # Adjust sensor angle based on car's rotation
-            sensor_angle_radians = math.radians(sensor_angle) + car_angle
-
-            # Calculate the ray's start and end positions in world coordinates
-            start = car_pos  # The car's position
-            ray_length = sensor_readings[i]
-            end = (
-                car_pos[0] + math.cos(sensor_angle_radians) * ray_length,
-                car_pos[1] + math.sin(sensor_angle_radians) * ray_length,
-            )
-
-            # Transform start and end positions to screen coordinates
-            start_p = self._world_to_screen(start, zoom, translation, angle)
-            end_p = self._world_to_screen(end, zoom, translation, angle)
-
-            # Apply the static downward shift to both start and end points
-            start_p = (start_p[0], start_p[1] + static_shift)
-            end_p = (end_p[0], end_p[1] + static_shift)
-
-            # Choose ray color for visualization
-            color = (255, 255, 255)  # White rays
-
-            # Draw the ray
-            pygame.draw.line(self.surf, color, start_p, end_p, 2)
-
+        
 
 
 
@@ -913,43 +864,40 @@ class CarRacing(gym.Env, EzPickle):
     def get_abs_sensors_3(self):
         assert self.car is not None
         return self.car.wheels[3].omega
-
-
-    def cast_sensor_readings(self):
+    def get_on_grass(self):
+        assert self.car is not None
+        return self.car.on_grass
+    def is_on_grass(self, car_pos):
+        for road_tile in self.road_poly:
+            if self.is_point_in_polygon(car_pos, road_tile[0]):  # Check polygon vertices
+                return False  # It's on the road
+        return True  # Not on road implies grass
+    
+    def is_point_in_polygon(self, point, polygon):
         """
-        Returns sensor readings, using a cached value if available.
+        Determines if a point is inside a given polygon using the ray-casting algorithm.
+
+        :param point: Tuple (x, y) of the point to check.
+        :param polygon: List of tuples [(x1, y1), (x2, y2), ...] representing the polygon vertices.
+        :return: True if the point is inside the polygon, False otherwise.
         """
-        if self.cache_valid:
-            return self.cached_sensor_readings  # Use cached values if available
+        x, y = point
+        n = len(polygon)
+        inside = False
 
-        car_pos = self.car.hull.position  # Car's position
-        car_angle = self.car.hull.angle  # Car's rotation
-        readings = []
-        raycast_callback = GrassRayCastCallback()
+        px, py = polygon[0]
+        for i in range(n + 1):
+            sx, sy = polygon[i % n]
+            if y > min(py, sy):
+                if y <= max(py, sy):
+                    if x <= max(px, sx):
+                        if py != sy:
+                            xinters = (y - py) * (sx - px) / (sy - py) + px
+                        if px == sx or x <= xinters:
+                            inside = not inside
+            px, py = sx, sy
 
-        for sensor_angle in SENSOR_ANGLES:
-            # Calculate the ray direction in world coordinates
-            sensor_angle_radians = math.radians(sensor_angle) + car_angle
-            end_x = car_pos[0] + math.cos(sensor_angle_radians) * RAY_LENGTH
-            end_y = car_pos[1] + math.sin(sensor_angle_radians) * RAY_LENGTH
-
-            # Perform raycast
-            self.world.RayCast(raycast_callback, car_pos, (end_x, end_y))
-
-            # Record the ray's length if it hit grass; otherwise, set to max length
-            if raycast_callback.fraction != -1:
-                readings.append(raycast_callback.fraction * RAY_LENGTH)
-            else:
-                readings.append(float("inf"))  # No grass detected
-
-        self.cached_sensor_readings = readings  # Cache the readings
-        self.cache_valid = True  # Mark the cache as valid
-        return readings
-
-
-    def get_sensor_readings(self):
-        if self.cache_valid:
-            return self.cached_sensor_readings
+        return inside
 
 
 
@@ -979,55 +927,57 @@ class CarRacing(gym.Env, EzPickle):
 
 
 
-# if __name__ == "__main__":
-#     a = np.array([0.0, 0.0, 0.0])
+if __name__ == "__main__":
+    a = np.array([0.0, 0.0, 0.0])
 
-#     def register_input():
-#         global quit, restart
-#         for event in pygame.event.get():
-#             if event.type == pygame.KEYDOWN:
-#                 if event.key == pygame.K_LEFT:
-#                     a[0] = -1.0
-#                 if event.key == pygame.K_RIGHT:
-#                     a[0] = +1.0
-#                 if event.key == pygame.K_UP:
-#                     a[1] = +1.0
-#                 if event.key == pygame.K_DOWN:
-#                     a[2] = +0.8  # set 1.0 for wheels to block to zero rotation
-#                 if event.key == pygame.K_RETURN:
-#                     restart = True
-#                 if event.key == pygame.K_ESCAPE:
-#                     quit = True
+    def register_input():
+        global quit, restart
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_LEFT:
+                    a[0] = -1.0
+                if event.key == pygame.K_RIGHT:
+                    a[0] = +1.0
+                if event.key == pygame.K_UP:
+                    a[1] = +1.0
+                if event.key == pygame.K_DOWN:
+                    a[2] = +0.8  # set 1.0 for wheels to block to zero rotation
+                if event.key == pygame.K_RETURN:
+                    restart = True
+                if event.key == pygame.K_ESCAPE:
+                    quit = True
 
-#             if event.type == pygame.KEYUP:
-#                 if event.key == pygame.K_LEFT:
-#                     a[0] = 0
-#                 if event.key == pygame.K_RIGHT:
-#                     a[0] = 0
-#                 if event.key == pygame.K_UP:
-#                     a[1] = 0
-#                 if event.key == pygame.K_DOWN:
-#                     a[2] = 0
+            if event.type == pygame.KEYUP:
+                if event.key == pygame.K_LEFT:
+                    a[0] = 0
+                if event.key == pygame.K_RIGHT:
+                    a[0] = 0
+                if event.key == pygame.K_UP:
+                    a[1] = 0
+                if event.key == pygame.K_DOWN:
+                    a[2] = 0
 
-#             if event.type == pygame.QUIT:
-#                 quit = True
+            if event.type == pygame.QUIT:
+                quit = True
 
-#     env = CarRacing(render_mode="human")
+    env = CarRacing(render_mode="human")
 
-#     quit = False
-#     while not quit:
-#         env.reset()
-#         total_reward = 0.0
-#         steps = 0
-#         restart = False
-#         while True:
-#             register_input()
-#             s, r, terminated, truncated, info, on_grass = env.step(a)
-#             total_reward += r
-#             if steps % 200 == 0 or terminated or truncated:
-#                 print("\naction " + str([f"{x:+0.2f}" for x in a]))
-#                 print(f"step {steps} total_reward {total_reward:+0.2f}")
-#             steps += 1
-#             if terminated or truncated or restart or quit:
-#                 break
-#     env.close()
+    quit = False
+    while not quit:
+        env.reset()
+        total_reward = 0.0
+        steps = 0
+        restart = False
+        while True:
+            register_input()
+            on_grass =  env.get_on_grass()
+            print(f"on_grass: {on_grass}")
+            s, r, terminated, truncated, info = env.step(a)
+            total_reward += r
+            if steps % 200 == 0 or terminated or truncated:
+                print("\naction " + str([f"{x:+0.2f}" for x in a]))
+                print(f"step {steps} total_reward {total_reward:+0.2f}")
+            steps += 1
+            if terminated or truncated or restart or quit:
+                break
+    env.close()
